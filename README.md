@@ -1,4 +1,4 @@
-# ELK Stack Logging Demo
+# WordPress VIP Logs ELK Pipeline
 
 A centralized log ingesting system utilizing the Elastic Stack (Elasticsearch, Logstash, Kibana), and Grafana. Specifically configured to monitor and analyze [WordPress VIP HTTP request logs](https://docs.wpvip.com/logs/log-shipping/), providing a solution for log collection, processing, visualization, and AWS integration.
 
