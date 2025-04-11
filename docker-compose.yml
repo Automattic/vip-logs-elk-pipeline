@@ -1,0 +1,109 @@
+services:
+  # Elasticsearch: A distributed, RESTful search and analytics engine.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.2
+    environment:
+      - discovery.type=single-node  # Set to single-node for development
+      - xpack.security.enabled=false  # Disable security for local development
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"  # Set Java heap size
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data  # Persistent storage for Elasticsearch data
+    ports:
+      - "9200:9200"
+    networks:
+      - elk
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Logstash: A data processing pipeline that ingests data from multiple sources.
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.1
+    volumes:
+      - ./logstash/config:/usr/share/logstash/config  # Logstash configuration files
+      - ./logstash/pipeline:/usr/share/logstash/pipeline  # Logstash pipeline definitions
+      - ${HOME}/.aws:/usr/share/logstash/.aws:ro  # Pass AWS credentials to the container
+      - ${AWS_S3_LOCAL_BACKUP_DIR:-./logs}:/usr/share/logstash/data/s3-backups  # Mount a local directory for S3 backups
+    ports:
+      - "5044:5044"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+    environment:
+      - AWS_S3_BACKUP_DIR=/usr/share/logstash/data/s3-backups  # Directory for S3 backups within the container
+      # The following variables are used by the Logstash pipeline.
+      # These are passed to the container from the .env file and are explained in .env.example
+      - AWS_S3_BUCKET
+      - AWS_S3_REGION
+      - AWS_S3_PREFIX
+      - AWS_S3_DELETE=${AWS_S3_DELETE:-false}
+      - AWS_S3_WATCH=${AWS_S3_WATCH:-true}
+      - AWS_PROFILE=${AWS_PROFILE:-default}
+
+  # Kibana: A visualization layer for Elasticsearch data.
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.2
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200  # URL of Elasticsearch
+    ports:
+      - "5601:5601"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]  # Health check for Kibana
+      interval: 10s  # Check every 10 seconds
+      timeout: 5s  # 5 seconds timeout
+      retries: 20  # Retry 20 times
+
+  # Grafana: An open-source analytics and monitoring solution.
+  grafana:
+    image: grafana/grafana-oss:10.2.3
+    ports:
+      - "3000:3000"
+    environment:
+      # Disable security for local development. Not intended for production.
+      - GF_AUTH_ANONYMOUS_ENABLED=true  # Enable anonymous access
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin  # Role for anonymous users
+      - GF_AUTH_DISABLE_LOGIN_FORM=true  # Disable login form
+      - GF_SECURITY_ALLOW_EMBEDDING=true  # Allow embedding of Grafana panels
+      - GF_LOG_LEVEL=debug  # Set log level to debug
+      - GF_LOG_FILTERS=plugin:debug  # Set log filters for plugins
+      - GF_LOG_MODE=console  # Log mode set to console
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+    volumes:
+      - grafana-data:/var/lib/grafana  # Persistent storage for Grafana data
+      # Provisioning configuration for Grafana. This will create a default datasource and dashboard
+      - ./grafana/provisioning:/etc/grafana/provisioning
+
+  # Init-scripts: Runs initialization scripts. Imports the Kibana saved objects automatically
+  init-scripts:
+    image: curlimages/curl:8.5.0
+    depends_on:
+      kibana:
+        condition: service_healthy  # Wait for Kibana to be healthy before running
+    volumes:
+      - ./init-scripts.sh:/init-scripts.sh  # Initialization script
+      - ./kibana/saved_objects:/usr/share/kibana/saved_objects  # Directory for Kibana saved objects
+    entrypoint: /init-scripts.sh  # Execute the initialization script
+    networks:
+      - elk
+    environment:
+      - KIBANA_HOST=http://kibana:5601  # URL of Kibana
+      - KIBANA_EXPORT_FILE=/usr/share/kibana/saved_objects/export.ndjson  # Export file for saved objects
+
+volumes:
+  elasticsearch-data:
+    driver: local
+  grafana-data:
+
+networks:
+  elk:
+    driver: bridge  # Bridge network for ELK stack services
